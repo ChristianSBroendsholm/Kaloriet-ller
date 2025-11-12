@@ -1,8 +1,13 @@
 # https://world.openfoodfacts.org/data 
 
 import re
+import requests
 import tkinter as tk
 from tkinter import ttk
+
+url = "https://world.openfoodfacts.org/data"
+
+response = requests.get(url)
 
 
 class Model:
