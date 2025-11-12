@@ -9,6 +9,10 @@ url = "https://world.openfoodfacts.org/data"
 
 response = requests.get(url)
 
+#eksempel på search: https://world.openfoodfacts.org/cgi/search.pl?search_terms=oatmeal&search_simple=1&action=process
+
+def search(word):
+    response = requests.get(f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={word}&search_simple=1&action=process")
 
 class Model:
     def __init__(self, email):
