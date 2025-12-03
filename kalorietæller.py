@@ -1,166 +1,226 @@
 # https://world.openfoodfacts.org/data 
 
-import re
 import requests
 import tkinter as tk
 from tkinter import ttk
+from datetime import date
+import sqlite3
 
-url = "https://world.openfoodfacts.org/data"
+#url = "https://world.openfoodfacts.org/data"
 
-response = requests.get(url)
+#response = requests.get(url)
 
 #eksempel på search: https://world.openfoodfacts.org/cgi/search.pl?search_terms=oatmeal&search_simple=1&action=process
 
 def search(word):
-    response = requests.get(f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={word}&search_simple=1&action=process")
+    url = "https://world.openfoodfacts.org/cgi/search.pl"
+    params = {
+        "search_terms": word,
+        "search_simple": 1,
+        "action": "process",
+        "json": 1
+    }
+
+    r = requests.get(url, params=params)
+    data = r.json()
+    return data
+
+#print(search("oatmeal"))
+
+class Database:
+    def __init__(self, name):
+        sql_statements = [ 
+        """CREATE TABLE IF NOT EXISTS foods (
+            id INTEGER PRIMARY KEY, 
+            name text NOT NULL, 
+            weight INT NOT NULL, 
+            calories INT NOT NULL,
+            protein INT NOT NULL,
+            day date NOT NULL
+        );""",
+        ]
+        self.name = name
+        self.conn = sqlite3.connect(self.name)
+        self.cur = self.conn.cursor()
+        for statement in sql_statements:
+            self.cur.execute(statement)
+        #sqlite3.SQLITE_CREATE_TABLE[]
+        #self.create_table = "foods"
+        
+        #self.conn.commit()
+        #self.cur.execute(self.create_table)
+        self.cur.execute("SELECT * FROM foods")
+        #self.conn.commit()
+        self.all_food = self.cur.fetchall() 
+
+        self.name = name
+    
+    def insert_entry(self, product_id, name, grams, calories, protein):
+        new_food = {"ID": product_id, "Navn": name, "Vægt": grams, "Kalorier": calories, "Protein": protein, "Dag tilføjet": date.today()}
+        self.cur.execute(
+            "INSERT INTO foods (id, name, weight, calories, protein, day) VALUES (?, ?, ?, ?, ?, ?)",
+            (product_id, name, grams, calories, protein, date.today())
+        )
+        self.conn.commit()
+        self.all_food.append(new_food)
+
+        #self.conn.commit(self.all_food)
+        
+    
+    def sum_today(self):
+        daily_calories = 0
+        daily_protein = 0 
+        current_date = date.today()
+        for food in self.all_food:
+            if food["Dag tilføjet"] == current_date:
+                daily_calories += food["Kalorier"]
+                daily_protein += food["Protein"]
+        return daily_calories, daily_protein
+"""
+    def add_to_file(self):
+
+        with open(self.name, "w", encoding="utf-8", newline="") as csvfile:
+            element_writer = csv.writer(csvfile)
+            for element in list:
+                element_writer.writerow(element.split(", "))
+"""        
+
+
 
 class Model:
-    def __init__(self, email):
-        self.email = email
+    def __init__(self, database):
+        self.db = database
 
-    @property
-    def email(self):
-        return self.__email
+    def search_product(self, word):
+        url = "https://world.openfoodfacts.org/cgi/search.pl"
+        params = {
+            "search_terms": word,
+            "search_simple": 1,
+            "action": "process",
+            "json": 1
+        }
+        r = requests.get(url, params=params)
+        data = r.json()
+        return data["products"]
 
-    @email.setter
-    def email(self, value):
-        """
-        Validate the email
-        :param value:
-        :return:
-        """
-        pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        if re.fullmatch(pattern, value):
-            self.__email = value
-        else:
-            raise ValueError(f'Invalid email address: {value}')
+    def add_entry(self, product_id, name, grams, calories, protein):
+        self.db.insert_entry(product_id, name, grams, calories, protein)
 
-    def save(self):
-        """
-        Save the email into a file
-        :return:
-        """
-        with open('emails.txt', 'a') as f:
-            f.write(self.email + '\n')
+    def get_daily_total(self):
+        return self.db.sum_today()
+    
+    def calc_nutrition(self, product, grams):
+        factor = grams / 100
+        calories = product["nutriments"]["energy-kcal_100g"] * factor
+        protein = product["nutriments"]["proteins_100g"] * factor
+        return calories, protein
+
+
 
 class View(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
-        # create widgets
-        # label
-        self.label = ttk.Label(self, text='Email:')
-        self.label.grid(row=1, column=0)
+        self.search_var = tk.StringVar()
+        self.entry_grams = tk.StringVar()
 
-        # email entry
-        self.email_var = tk.StringVar()
-        self.email_entry = ttk.Entry(self, textvariable=self.email_var, width=30)
-        self.email_entry.grid(row=1, column=1, sticky=tk.NSEW)
+        # søgefelt
+        self.search_entry = ttk.Entry(self, textvariable=self.search_var)
+        self.search_button = ttk.Button(self, text="Søg", command=self.on_search)
 
-        # save button
-        self.save_button = ttk.Button(self, text='Save', command=self.save_button_clicked)
-        self.save_button.grid(row=1, column=3, padx=10)
+        # resultater
+        self.result_list = tk.Listbox(self)
 
-        # message
-        self.message_label = ttk.Label(self, text='', foreground='red')
-        self.message_label.grid(row=2, column=1, sticky=tk.W)
+        # produktdetaljer
+        self.product_label = ttk.Label(self, text="")
+        self.grams_entry = ttk.Entry(self, textvariable=self.entry_grams)
+        self.add_button = ttk.Button(self, text="Tilføj", command=self.on_add)
 
-        # set the controller
+        # total
+        self.total_label = ttk.Label(self, text="")
+        
         self.controller = None
 
     def set_controller(self, controller):
-        """
-        Set the controller
-        :param controller:
-        :return:
-        """
         self.controller = controller
 
-    def save_button_clicked(self):
-        """
-        Handle button click event
-        :return:
-        """
+    def on_search(self):
         if self.controller:
-            self.controller.save(self.email_var.get())
+            self.controller.search(self.search_var.get())
 
-    def show_error(self, message):
-        """
-        Show an error message
-        :param message:
-        :return:
-        """
-        self.message_label['text'] = message
-        self.message_label['foreground'] = 'red'
-        self.message_label.after(3000, self.hide_message)
-        self.email_entry['foreground'] = 'red'
+    def on_add(self):
+        if self.controller:
+            self.controller.add_amount(self.entry_grams.get())
 
-    def show_success(self, message):
-        """
-        Show a success message
-        :param message:
-        :return:
-        """
-        self.message_label['text'] = message
-        self.message_label['foreground'] = 'green'
-        self.message_label.after(3000, self.hide_message)
+    def show_products(self, products):
+        self.result_list.delete(0, tk.END)
+        for p in products:
+            self.result_list.insert(tk.END, p["product_name"])
 
-        # reset the form
-        self.email_entry['foreground'] = 'black'
-        self.email_var.set('')
+    def show_products(self, data):
+        self.product_label["text"] = f"{data["name"]}"
 
-    def hide_message(self):
-        """
-        Hide the message
-        :return:
-        """
-        self.message_label['text'] = ''            
+            
 
 
 class Controller:
     def __init__(self, model, view):
         self.model = model
         self.view = view
+        self.view.set_controller(self)
+        self.selected_product = None
 
-    def save(self, email):
-        """
-        Save the email
-        :param email:
-        :return:
-        """
-        try:
+    def search(self, word):
+        products = self.model.search_product(word)
+        self.result_products = products
+        self.view.show_products(products)
 
-            # save the model
-            self.model.email = email
-            self.model.save()
+    def select_product(self, index):
+        self.selected_product = self.result_products[index]
+        self.view.show_product_details(self.selected_product)
 
-            # show a success message
-            self.view.show_success(f'The email {email} saved!')
+    def add_amount(self, grams_str):
+        grams = float(grams_str)
+        kcal, protein = self.model.calc_nutrition(self.selected_product, grams)
 
-        except ValueError as error:
-            # show an error message
-            self.view.show_error(error)        
+        self.model.add_entry(
+            name=self.selected_product["product_name"],
+            product_id=self.selected_product["id"],
+            grams=grams,
+            calories=kcal,
+            protein=protein
+        )
+
+        total = self.model.get_daily_total()
+        self.view.show_daily_total(total)
+        
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title('Kalorietæller')
+        self.title("Kalorietæller")
 
-        # create a model
-        model = Model('hello@pythontutorial.net')
+        # model skal oprettes med databaseforbindelse
+        database = Database("data.db")
+        model = Model(database)
 
-        # create a view and place it on the root window
+        # view placeres i appen
         view = View(self)
-        view.grid(row=0, column=0, padx=10, pady=10)
+        view.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
 
-        # create a controller
+        # controller forbinder model og view
         controller = Controller(model, view)
 
-        # set the controller to view
+        # view skal kende controlleren for events
         view.set_controller(controller)
 
+        # gøre rammen fleksibel i vinduet
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
 
 if __name__ == '__main__':
     app = App()
-    app.mainloop()            
+    app.mainloop()
+
+     
