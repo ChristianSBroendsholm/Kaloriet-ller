@@ -1,193 +1,178 @@
-# https://world.openfoodfacts.org/data 
-
 import requests
-import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 from datetime import date
 import sqlite3
+from PIL import Image
 
-#url = "https://world.openfoodfacts.org/data"
 
-#response = requests.get(url)
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
-#eksempel på search: https://world.openfoodfacts.org/cgi/search.pl?search_terms=oatmeal&search_simple=1&action=process
-
-def search(word):
-    url = "https://world.openfoodfacts.org/cgi/search.pl"
-    params = {
-        "search_terms": word,
-        "search_simple": 1,
-        "action": "process",
-        "json": 1
-    }
-
-    r = requests.get(url, params=params)
-    data = r.json()
-    return data
-
-#print(search("oatmeal"))
 
 class Database:
     def __init__(self, name):
-        sql_statements = [
-
-        """CREATE TABLE IF NOT EXISTS foods (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            weight REAL NOT NULL,
-            calories REAL NOT NULL,
-            protein REAL NOT NULL,
-            day DATE NOT NULL
-        );"""  
-        ]
-        self.name = name
-        self.conn = sqlite3.connect(self.name)
+        self.conn = sqlite3.connect(name)
         self.cur = self.conn.cursor()
-        for statement in sql_statements:
-            self.cur.execute(statement)
-        #sqlite3.SQLITE_CREATE_TABLE[]
-        #self.create_table = "foods"
-        
-        #self.conn.commit()
-        #self.cur.execute(self.create_table)
-        self.cur.execute("SELECT * FROM foods")
-        #self.conn.commit()
-        self.all_food = self.cur.fetchall() 
-
-        self.name = name
-    
-    def insert_entry(self, product_id, name, grams, calories, protein):
-        # (id, name, weight, calories, protein, day)
         self.cur.execute(
-        "INSERT INTO foods (product_id, name, weight, calories, protein, day) VALUES (?, ?, ?, ?, ?, ?)",
-        (product_id, name, grams, calories, protein, date.today()))
+            """CREATE TABLE IF NOT EXISTS foods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                weight REAL NOT NULL,
+                calories REAL NOT NULL,
+                protein REAL NOT NULL,
+                day DATE NOT NULL
+            )"""
+        )
         self.conn.commit()
-        self.cur.execute("SELECT * FROM foods WHERE id = last_insert_rowid()")
-        self.all_food.append(self.cur.fetchone())
 
-        #self.conn.commit(self.all_food)
-        
-    
-    def sum_today(self):
-        daily_calories = 0
-        daily_protein = 0 
-        current_date = date.today().isoformat()
-        for food in self.all_food:
-            if food[6] == current_date:
-                daily_calories += food[4]
-                daily_protein += food[5]
-            #if food["Dag tilføjet"] == current_date:
-                #daily_calories += food["Kalorier"]
-                #daily_protein += food["Protein"]
-        return daily_calories, daily_protein
-"""
-    def add_to_file(self):
-
-        with open(self.name, "w", encoding="utf-8", newline="") as csvfile:
-            element_writer = csv.writer(csvfile)
-            for element in list:
-                element_writer.writerow(element.split(", "))
-"""        
-
+    def insert_entry(self, product_id, name, grams, calories, protein):
+        self.cur.execute(
+            "INSERT INTO foods (product_id, name, weight, calories, protein, day) VALUES (?, ?, ?, ?, ?, ?)",
+            (product_id, name, grams, calories, protein, date.today().isoformat())
+        )
+        self.conn.commit()
 
 
 class Model:
-    def __init__(self, database):
-        self.db = database
+    def __init__(self, db):
+        self.db = db
 
     def search_product(self, word):
-        url = "https://world.openfoodfacts.org/cgi/search.pl"
-        params = {
-            "search_terms": word,
-            "search_simple": 1,
-            "action": "process",
-            "json": 1
-        }
-        r = requests.get(url, params=params)
-        data = r.json()
-        return data["products"]
+        r = requests.get(
+            "https://world.openfoodfacts.org/cgi/search.pl",
+            params={
+                "search_terms": word,
+                "search_simple": 1,
+                "action": "process",
+                "json": 1
+            }
+        )
+        products = r.json()["products"]
+        term = word.lower()
 
-    def add_entry(self, product_id, name, grams, calories, protein):
-        self.db.insert_entry(product_id, name, grams, calories, protein)
+        def relevance(product):
+            name = product.get("product_name", "").lower()
+            ingredients = product.get("ingredients_text", "").lower()
+            score = 0
+            if name == term:
+                score += 5
+            elif term in name:
+                score += 3
+            if term in ingredients:
+                score += 1
+            return (-score, len(name))
 
-    def get_daily_total(self):
-        return self.db.sum_today()
-    
+        products.sort(key=relevance)
+        return products
+
     def calc_nutrition(self, product, grams):
         factor = grams / 100
-        calories = product["nutriments"].get("energy-kcal_100g", 0) * factor
-        protein = product["nutriments"].get("proteins_100g", 0) * factor
-        return calories, protein
+        kcal = product.get("nutriments", {}).get("energy-kcal_100g", 0) * factor
+        protein = product.get("nutriments", {}).get("proteins_100g", 0) * factor
+        return kcal, protein
+
+    def add_entry(self, product, grams, kcal, protein):
+        self.db.insert_entry(
+            product_id=product.get("id"),
+            name=product.get("product_name", "Ukendt produkt"),
+            grams=grams,
+            calories=kcal,
+            protein=protein
+        )
 
 
-
-class View(ttk.Frame):
+class View(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent)
-
-        self.search_var = tk.StringVar()
-        self.entry_grams = tk.StringVar()
-
-        # søgefelt
-        self.search_entry = ttk.Entry(self, textvariable=self.search_var)
-        self.search_button = ttk.Button(self, text="Søg", command=self.on_search)
-        self.search_entry.grid(row=0, column=0)
-        self.search_button.grid(row=0, column=1)
-        # resultater
-        self.result_list = tk.Listbox(self)
-        self.result_list.bind("<<ListboxSelect>>", self.on_select)
-        self.result_list.grid(row=1, column=0, columnspan=2)
-
-        # produktdetaljer
-        self.product_label = ttk.Label(self, text="")
-        self.grams_entry = ttk.Entry(self, textvariable=self.entry_grams)
-        self.add_button = ttk.Button(self, text="Tilføj", command=self.on_add)
-        self.product_label.grid(row=2, column=0, columnspan=2)
-        self.grams_entry.grid(row=3, column=0)
-        self.add_button.grid(row=3, column=1)
-
-        # total
-        self.total_label = ttk.Label(self, text="")
-        self.total_label.grid(row=4, column=0, columnspan=2)
-        
         self.controller = None
+        self.build_ui()
 
-    
     def set_controller(self, controller):
         self.controller = controller
-    
-    def on_select(self, event):
-        if not self.result_list.curselection():
-            return
-        index = self.result_list.curselection()[0]
-        self.controller.select_product(index)
 
-    def on_search(self):
-        if self.controller:
-            self.controller.search(self.search_var.get())
+    def build_ui(self):
+        self.grid_columnconfigure(0, weight=1)
 
-    def on_add(self):
-        if self.controller:
-            self.controller.add_amount(self.entry_grams.get())
+        self.title_label = ctk.CTkLabel(
+            self,
+            text="Kalorietæller",
+            font=("Segoe UI", 22, "bold"))
+        self.title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+
+        self.search_entry = ctk.CTkEntry(self, placeholder_text="Søg efter produkt")
+        self.search_entry.grid(row=1, column=0, padx=20, pady=(20, 10), sticky="ew")
+
+        self.search_button = ctk.CTkButton(self, text="Søg", command=self.on_search)
+        self.search_button.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
+
+        self.listbox = ctk.CTkScrollableFrame(self, height=180)
+        self.listbox.grid(row=3, column=0, padx=20, pady=10, sticky="nsew")
+
+        self.product_label = ctk.CTkLabel(self, text="", font=("Segoe UI", 16, "bold"))
+        self.product_label.grid(row=4, column=0, padx=20, pady=(10, 5))
+
+        self.image_label = ctk.CTkLabel(self, text="")
+        self.image_label.grid(row=5, column=0, pady=10)
+
+        self.grams_entry = ctk.CTkEntry(self, placeholder_text="Gram")
+        self.grams_entry.grid(row=6, column=0, padx=20, pady=5, sticky="ew")
+
+        self.add_button = ctk.CTkButton(self, text="Tilføj", command=self.on_add)
+        self.add_button.grid(row=7, column=0, padx=20, pady=10, sticky="ew")
+
+        self.result_label = ctk.CTkLabel(self, text="", font=("Segoe UI", 15))
+        self.result_label.grid(row=8, column=0, padx=20, pady=10)
+
+    def clear_list(self):
+        for widget in self.listbox.winfo_children():
+            widget.destroy()
+        self.listbox.configure(height=0)
 
     def show_products(self, products):
-        self.result_list.delete(0, tk.END)
-        for p in products:
-            self.result_list.insert(tk.END, p.get("product_name", "Ukendt produkt"))
+        self.clear_list()
+        for i, product in enumerate(products):
+            name = product.get("product_name", "Ukendt produkt")
+            btn = ctk.CTkButton(
+                self.listbox,
+                text=name,
+                anchor="w",
+                command=lambda i=i: self.controller.select_product(i)
+            )
+            self.add_product_widget(btn)
 
-    def show_product_details(self, data):
-        self.product_label["text"] = data.get("product_name", "Ukendt produkt")
+    def show_selected_product(self, name):
+        self.product_label.configure(text=name)
+
+    def show_added_result(self, kcal, protein):
+        self.result_label.configure(
+            text=f"{kcal:.0f} kcal  |  {protein:.1f} g protein"
+        )
+
+    def on_search(self):
+        self.controller.search(self.search_entry.get())
+
+    def on_add(self):
+        self.controller.add(self.grams_entry.get())
     
-    def show_daily_total(self, total):
-        kcal, protein = total
-        self.total_label["text"] = f"Kalorier: {kcal:.0f}, Protein: {protein:.1f} g"
-    
-    def show_added_item(self, kcal, protein):
-        self.total_label["text"] = f"Kalorier: {kcal:.0f}, Protein: {protein:.1f} g"
+    def show_product_image(self, url):
+        if not url:
+            self.image_label.configure(image=None, text="")
+            return
+
+        response = requests.get(url, stream=True)
+        image = Image.open(response.raw).resize((160, 160))
+        ctk_image = ctk.CTkImage(light_image=image, dark_image=image, size=(160, 160))
+
+        self.image_label.configure(image=ctk_image, text="")
+        self.image_label.image = ctk_image
+
+    def add_product_widget(self, widget):
+        widget.pack(fill="x", pady=2)
+        self.listbox.update_idletasks()
+        self.listbox.yview_moveto(1.0)
 
 
-            
 
 
 class Controller:
@@ -195,57 +180,43 @@ class Controller:
         self.model = model
         self.view = view
         self.view.set_controller(self)
+        self.products = []
         self.selected_product = None
 
     def search(self, word):
-        products = self.model.search_product(word)
-        self.result_products = products
-        self.view.show_products(products)
+        self.products = self.model.search_product(word)
+        self.view.show_products(self.products)
 
     def select_product(self, index):
-        self.selected_product = self.result_products[index]
-        self.view.show_product_details(self.selected_product)
+        self.selected_product = self.products[index]
+        self.view.show_selected_product(self.selected_product.get("product_name", "Ukendt produkt"))
+        image_url = self.selected_product.get("image_front_small_url")
+        self.view.show_product_image(image_url)
+        self.view.add_product_widget
 
-    def add_amount(self, grams_str):
+    def add(self, grams_str):
+        if not self.selected_product:
+            return
         grams = float(grams_str)
         kcal, protein = self.model.calc_nutrition(self.selected_product, grams)
-
-        self.model.add_entry(
-            product_id=self.selected_product["id"],
-            name=self.selected_product.get("product_name", "Ukendt produkt"),
-            grams=grams,
-            calories=kcal,
-            protein=protein
-        )
-
-        self.view.show_added_item(kcal, protein)
-        
+        self.model.add_entry(self.selected_product, grams, kcal, protein)
+        self.view.show_added_result(kcal, protein)
 
 
-class App(tk.Tk):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-
         self.title("Kalorietæller")
+        self.geometry("520x720")
 
-        # Model skal oprettes med databaseforbindelse
-        database = Database("data.db")
-        model = Model(database)
-
-        # View placeres i appen
+        db = Database("data.db")
+        model = Model(db)
         view = View(self)
-        view.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        view.pack(fill="both", expand=True)
 
-        # Controller forbinder model og view
-        controller = Controller(model, view)
+        Controller(model, view)
 
-        # View skal kende controlleren for events
-        view.set_controller(controller)
 
-        # Gør rammen fleksibel i vinduet
-        self.rowconfigure(0, weight=1)
-        self.columnconfigure(0, weight=1)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = App()
     app.mainloop()
