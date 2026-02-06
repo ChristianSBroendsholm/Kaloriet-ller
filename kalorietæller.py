@@ -29,15 +29,17 @@ def search(word):
 
 class Database:
     def __init__(self, name):
-        sql_statements = [ 
+        sql_statements = [
+
         """CREATE TABLE IF NOT EXISTS foods (
-            id INTEGER PRIMARY KEY, 
-            name text NOT NULL, 
-            weight INT NOT NULL, 
-            calories INT NOT NULL,
-            protein INT NOT NULL,
-            day date NOT NULL
-        );""",
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            weight REAL NOT NULL,
+            calories REAL NOT NULL,
+            protein REAL NOT NULL,
+            day DATE NOT NULL
+        );"""  
         ]
         self.name = name
         self.conn = sqlite3.connect(self.name)
@@ -56,13 +58,13 @@ class Database:
         self.name = name
     
     def insert_entry(self, product_id, name, grams, calories, protein):
-        new_food = {"ID": product_id, "Navn": name, "Vægt": grams, "Kalorier": calories, "Protein": protein, "Dag tilføjet": date.today()}
+        # (id, name, weight, calories, protein, day)
         self.cur.execute(
-            "INSERT INTO foods (id, name, weight, calories, protein, day) VALUES (?, ?, ?, ?, ?, ?)",
-            (product_id, name, grams, calories, protein, date.today())
-        )
+        "INSERT INTO foods (product_id, name, weight, calories, protein, day) VALUES (?, ?, ?, ?, ?, ?)",
+        (product_id, name, grams, calories, protein, date.today()))
         self.conn.commit()
-        self.all_food.append(new_food)
+        self.cur.execute("SELECT * FROM foods WHERE id = last_insert_rowid()")
+        self.all_food.append(self.cur.fetchone())
 
         #self.conn.commit(self.all_food)
         
@@ -70,11 +72,14 @@ class Database:
     def sum_today(self):
         daily_calories = 0
         daily_protein = 0 
-        current_date = date.today()
+        current_date = date.today().isoformat()
         for food in self.all_food:
-            if food["Dag tilføjet"] == current_date:
-                daily_calories += food["Kalorier"]
-                daily_protein += food["Protein"]
+            if food[6] == current_date:
+                daily_calories += food[4]
+                daily_protein += food[5]
+            #if food["Dag tilføjet"] == current_date:
+                #daily_calories += food["Kalorier"]
+                #daily_protein += food["Protein"]
         return daily_calories, daily_protein
 """
     def add_to_file(self):
@@ -111,8 +116,8 @@ class Model:
     
     def calc_nutrition(self, product, grams):
         factor = grams / 100
-        calories = product["nutriments"]["energy-kcal_100g"] * factor
-        protein = product["nutriments"]["proteins_100g"] * factor
+        calories = product["nutriments"].get("energy-kcal_100g", 0) * factor
+        protein = product["nutriments"].get("proteins_100g", 0) * factor
         return calories, protein
 
 
@@ -127,22 +132,36 @@ class View(ttk.Frame):
         # søgefelt
         self.search_entry = ttk.Entry(self, textvariable=self.search_var)
         self.search_button = ttk.Button(self, text="Søg", command=self.on_search)
-
+        self.search_entry.grid(row=0, column=0)
+        self.search_button.grid(row=0, column=1)
         # resultater
         self.result_list = tk.Listbox(self)
+        self.result_list.bind("<<ListboxSelect>>", self.on_select)
+        self.result_list.grid(row=1, column=0, columnspan=2)
 
         # produktdetaljer
         self.product_label = ttk.Label(self, text="")
         self.grams_entry = ttk.Entry(self, textvariable=self.entry_grams)
         self.add_button = ttk.Button(self, text="Tilføj", command=self.on_add)
+        self.product_label.grid(row=2, column=0, columnspan=2)
+        self.grams_entry.grid(row=3, column=0)
+        self.add_button.grid(row=3, column=1)
 
         # total
         self.total_label = ttk.Label(self, text="")
+        self.total_label.grid(row=4, column=0, columnspan=2)
         
         self.controller = None
 
+    
     def set_controller(self, controller):
         self.controller = controller
+    
+    def on_select(self, event):
+        if not self.result_list.curselection():
+            return
+        index = self.result_list.curselection()[0]
+        self.controller.select_product(index)
 
     def on_search(self):
         if self.controller:
@@ -155,10 +174,18 @@ class View(ttk.Frame):
     def show_products(self, products):
         self.result_list.delete(0, tk.END)
         for p in products:
-            self.result_list.insert(tk.END, p["product_name"])
+            self.result_list.insert(tk.END, p.get("product_name", "Ukendt produkt"))
 
-    def show_products(self, data):
-        self.product_label["text"] = f"{data["name"]}"
+    def show_product_details(self, data):
+        self.product_label["text"] = data.get("product_name", "Ukendt produkt")
+    
+    def show_daily_total(self, total):
+        kcal, protein = total
+        self.total_label["text"] = f"Kalorier: {kcal:.0f}, Protein: {protein:.1f} g"
+    
+    def show_added_item(self, kcal, protein):
+        self.total_label["text"] = f"Kalorier: {kcal:.0f}, Protein: {protein:.1f} g"
+
 
             
 
@@ -184,16 +211,16 @@ class Controller:
         kcal, protein = self.model.calc_nutrition(self.selected_product, grams)
 
         self.model.add_entry(
-            name=self.selected_product["product_name"],
             product_id=self.selected_product["id"],
+            name=self.selected_product.get("product_name", "Ukendt produkt"),
             grams=grams,
             calories=kcal,
             protein=protein
         )
 
-        total = self.model.get_daily_total()
-        self.view.show_daily_total(total)
+        self.view.show_added_item(kcal, protein)
         
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -201,26 +228,24 @@ class App(tk.Tk):
 
         self.title("Kalorietæller")
 
-        # model skal oprettes med databaseforbindelse
+        # Model skal oprettes med databaseforbindelse
         database = Database("data.db")
         model = Model(database)
 
-        # view placeres i appen
+        # View placeres i appen
         view = View(self)
         view.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
 
-        # controller forbinder model og view
+        # Controller forbinder model og view
         controller = Controller(model, view)
 
-        # view skal kende controlleren for events
+        # View skal kende controlleren for events
         view.set_controller(controller)
 
-        # gøre rammen fleksibel i vinduet
+        # Gør rammen fleksibel i vinduet
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
 
 if __name__ == '__main__':
     app = App()
     app.mainloop()
-
-     
