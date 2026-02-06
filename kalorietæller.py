@@ -4,11 +4,6 @@ from datetime import date
 import sqlite3
 from PIL import Image
 
-from pycallgraph2 import PyCallGraph
-from pycallgraph2.output import GraphvizOutput
-graphviz = GraphvizOutput()
-graphviz.output_file = 'pycallgraph_hierarchy.png'
-
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
@@ -289,13 +284,14 @@ class App(ctk.CTk):
 if __name__ == "__main__":
     app = App()
 
+    # Dette stykke udkommenterede kode er til et call graph
+    # Det gav dog et uønsket resultat ved test 
     """
     from pycallgraph2 import PyCallGraph
     from pycallgraph2.output import GraphvizOutput
     graphviz = GraphvizOutput()
     graphviz.output_file = 'pycallgraph_hierarchy.png'
     """
-
     #with PyCallGraph(output=graphviz):
         
     app.mainloop()
