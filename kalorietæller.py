@@ -6,7 +6,7 @@ from PIL import Image
 
 
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+ctk.set_default_color_theme("green")
 
 
 class Database:
@@ -32,6 +32,14 @@ class Database:
             (product_id, name, grams, calories, protein, date.today().isoformat())
         )
         self.conn.commit()
+    
+    def get_daily_totals(self):
+        self.cur.execute(
+            "SELECT SUM(calories), SUM(protein) FROM foods WHERE day = ?",
+            (date.today().isoformat(),)
+        )
+        return self.cur.fetchone()
+
 
 
 class Model:
@@ -68,9 +76,15 @@ class Model:
 
     def calc_nutrition(self, product, grams):
         factor = grams / 100
-        kcal = product.get("nutriments", {}).get("energy-kcal_100g", 0) * factor
-        protein = product.get("nutriments", {}).get("proteins_100g", 0) * factor
-        return kcal, protein
+        nutriments = product.get("nutriments", {})
+
+        return {
+            "kcal": nutriments.get("energy-kcal_100g", 0) * factor,
+            "protein": nutriments.get("proteins_100g", 0) * factor,
+            "fat": nutriments.get("fat_100g", 0) * factor,
+            "carbs": nutriments.get("carbohydrates_100g", 0) * factor,
+        }
+
 
     def add_entry(self, product, grams, kcal, protein):
         self.db.insert_entry(
@@ -115,22 +129,33 @@ class View(ctk.CTkFrame):
         self.image_label = ctk.CTkLabel(self, text="")
         self.image_label.grid(row=5, column=0, pady=10)
 
-        self.grams_entry = ctk.CTkEntry(self, placeholder_text="Gram")
-        self.grams_entry.grid(row=6, column=0, padx=20, pady=5, sticky="ew")
+        self.facts_label = ctk.CTkLabel(self, text="", justify="left")
+        self.facts_label.grid(row=5, column=0, padx=20)
+
+        self.unit_var = ctk.StringVar(value="gram")
+        
+        self.gram_radio = ctk.CTkRadioButton(self, text="Gram", variable=self.unit_var, value="gram", command=self.on_unit_change)
+        self.portion_radio = ctk.CTkRadioButton(self, text="Portion", variable=self.unit_var, value="portion", command=self.on_unit_change)
+
+        self.gram_radio.grid(row=6, column=0, sticky="w", padx=40)
+        self.portion_radio.grid(row=6, column=0, sticky="e", padx=40)
+
+        self.input_entry = ctk.CTkEntry(self, placeholder_text="Gram")
+        self.input_entry.grid(row=7, column=0, padx=20, pady=5, sticky="ew")
 
         self.add_button = ctk.CTkButton(self, text="Tilføj", command=self.on_add)
-        self.add_button.grid(row=7, column=0, padx=20, pady=10, sticky="ew")
+        self.add_button.grid(row=8, column=0, padx=20, pady=10, sticky="ew")
 
         self.result_label = ctk.CTkLabel(self, text="", font=("Segoe UI", 15))
-        self.result_label.grid(row=8, column=0, padx=20, pady=10)
+        self.result_label.grid(row=9, column=0, padx=20, pady=10)
 
-    def clear_list(self):
+
+    def clear_products(self):
         for widget in self.listbox.winfo_children():
             widget.destroy()
-        self.listbox.configure(height=0)
 
     def show_products(self, products):
-        self.clear_list()
+        self.clear_products()
         for i, product in enumerate(products):
             name = product.get("product_name", "Ukendt produkt")
             btn = ctk.CTkButton(
@@ -139,7 +164,19 @@ class View(ctk.CTkFrame):
                 anchor="w",
                 command=lambda i=i: self.controller.select_product(i)
             )
-            self.add_product_widget(btn)
+            btn.pack(fill="x", pady=2)
+
+    def show_product_facts(self, product):
+        nutr = product.get("nutriments", {})
+        text = (
+            f"Pr. 100 g\n"
+            f"Kcal: {nutr.get('energy-kcal_100g', 0)}\n"
+            f"Protein: {nutr.get('proteins_100g', 0)} g\n"
+            f"Fedt: {nutr.get('fat_100g', 0)} g\n"
+            f"Kulhydrat: {nutr.get('carbohydrates_100g', 0)} g"
+        )
+        self.facts_label.configure(text=text)
+
 
     def show_selected_product(self, name):
         self.product_label.configure(text=name)
@@ -153,7 +190,7 @@ class View(ctk.CTkFrame):
         self.controller.search(self.search_entry.get())
 
     def on_add(self):
-        self.controller.add(self.grams_entry.get())
+        self.controller.add(self.input_entry.get())
     
     def show_product_image(self, url):
         if not url:
@@ -172,6 +209,11 @@ class View(ctk.CTkFrame):
         self.listbox.update_idletasks()
         self.listbox.yview_moveto(1.0)
 
+    def on_unit_change(self):
+        unit = self.unit_var.get()
+        self.input_entry.configure(placeholder_text="Gram") if unit == "gram" else self.input_entry.configure(placeholder_text="Portioner")
+        self.result_label.configure(text="")
+            
 
 
 
@@ -190,24 +232,39 @@ class Controller:
     def select_product(self, index):
         self.selected_product = self.products[index]
         self.view.show_selected_product(self.selected_product.get("product_name", "Ukendt produkt"))
-        image_url = self.selected_product.get("image_front_small_url")
-        self.view.show_product_image(image_url)
-        self.view.add_product_widget
+        self.view.show_product_image(self.selected_product.get("image_front_small_url"))
+        self.view.show_product_facts(self.selected_product)
 
-    def add(self, grams_str):
+    def add(self, amount_str):
         if not self.selected_product:
             return
-        grams = float(grams_str)
-        kcal, protein = self.model.calc_nutrition(self.selected_product, grams)
-        self.model.add_entry(self.selected_product, grams, kcal, protein)
-        self.view.show_added_result(kcal, protein)
+
+        amount = float(amount_str)
+        unit = self.view.unit_var.get()
+
+        if unit == "portion":
+            s_size = self.selected_product.get("serving_size", 100).replace("g", "")
+            grams = float(s_size) * amount
+            print(grams)
+        else:
+            grams = amount
+
+        data = self.model.calc_nutrition(self.selected_product, grams)
+        self.model.add_entry(self.selected_product, grams, data["kcal"], data["protein"])
+
+        totals = self.model.db.get_daily_totals()
+        self.view.show_added_result(data["kcal"], data["protein"])
+        self.view.result_label.configure(
+            text=f"Tilføjet: {data['kcal']:.0f} kcal | {data['protein']:.1f} g protein\n"
+                f"I dag: {totals[0]:.0f} kcal | {totals[1]:.1f} g protein"
+        )
 
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Kalorietæller")
-        self.geometry("520x720")
+        self.geometry("520x960")
 
         db = Database("data.db")
         model = Model(db)
