@@ -4,6 +4,11 @@ from datetime import date
 import sqlite3
 from PIL import Image
 
+from pycallgraph2 import PyCallGraph
+from pycallgraph2.output import GraphvizOutput
+graphviz = GraphvizOutput()
+graphviz.output_file = 'pycallgraph_hierarchy.png'
+
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
@@ -127,10 +132,10 @@ class View(ctk.CTkFrame):
         self.product_label.grid(row=4, column=0, padx=20, pady=(10, 5))
 
         self.image_label = ctk.CTkLabel(self, text="")
-        self.image_label.grid(row=5, column=0, pady=10)
+        self.image_label.grid(row=5, column=0, sticky="w", padx=100, pady=20)
 
         self.facts_label = ctk.CTkLabel(self, text="", justify="left")
-        self.facts_label.grid(row=5, column=0, padx=20)
+        self.facts_label.grid(row=5, column=0, sticky="e", padx=100)
 
         self.unit_var = ctk.StringVar(value="gram")
         
@@ -169,11 +174,11 @@ class View(ctk.CTkFrame):
     def show_product_facts(self, product):
         nutr = product.get("nutriments", {})
         text = (
-            f"Pr. 100 g\n"
-            f"Kcal: {nutr.get('energy-kcal_100g', 0)}\n"
-            f"Protein: {nutr.get('proteins_100g', 0)} g\n"
-            f"Fedt: {nutr.get('fat_100g', 0)} g\n"
-            f"Kulhydrat: {nutr.get('carbohydrates_100g', 0)} g"
+            f"Pr. 100 g:\n"
+            f"      Kcal: {nutr.get('energy-kcal_100g', 0)}\n"
+            f"      Protein: {nutr.get('proteins_100g', 0)} g\n"
+            f"      Fedt: {nutr.get('fat_100g', 0)} g\n"
+            f"      Kulhydrat: {nutr.get('carbohydrates_100g', 0)} g"
         )
         self.facts_label.configure(text=text)
 
@@ -211,6 +216,7 @@ class View(ctk.CTkFrame):
 
     def on_unit_change(self):
         unit = self.unit_var.get()
+        self.focus_set()
         self.input_entry.configure(placeholder_text="Gram") if unit == "gram" else self.input_entry.configure(placeholder_text="Portioner")
         self.result_label.configure(text="")
             
@@ -243,9 +249,15 @@ class Controller:
         unit = self.view.unit_var.get()
 
         if unit == "portion":
-            s_size = self.selected_product.get("serving_size", 100).replace("g", "")
+            s_size_raw = self.selected_product.get("serving_size", 100)
+
+            if isinstance(s_size_raw, str) and any(c.isalpha() for c in s_size_raw):
+                s_size = ''.join(c for c in s_size_raw if c.isdigit() or c == '.')
+            else:
+                s_size = str(s_size_raw)
+
             grams = float(s_size) * amount
-            print(grams)
+
         else:
             grams = amount
 
@@ -264,7 +276,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Kalorietæller")
-        self.geometry("520x960")
+        self.geometry("520x924")
 
         db = Database("data.db")
         model = Model(db)
@@ -276,4 +288,14 @@ class App(ctk.CTk):
 
 if __name__ == "__main__":
     app = App()
+
+    """
+    from pycallgraph2 import PyCallGraph
+    from pycallgraph2.output import GraphvizOutput
+    graphviz = GraphvizOutput()
+    graphviz.output_file = 'pycallgraph_hierarchy.png'
+    """
+
+    #with PyCallGraph(output=graphviz):
+        
     app.mainloop()
