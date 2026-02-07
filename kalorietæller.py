@@ -237,30 +237,43 @@ class Controller:
         self.view.show_product_facts(self.selected_product)
 
     def add(self, amount_str):
+        #Hvis der ikke er valgt et produkt, afslut funktionen
         if not self.selected_product:
             return
 
-        amount = float(amount_str)
-        unit = self.view.unit_var.get()
+        amount = float(amount_str) #Konverter brugerens input (tekst) til et tal
+        unit = self.view.unit_var.get() #Hent den valgte enhed (gram eller portion)
 
+        #Hvis brugeren har valgt "portion"
         if unit == "portion":
+            #Hent portionsstørrelse fra produktet (standard = 100 g)
             s_size_raw = self.selected_product.get("serving_size", 100)
 
+            #Hvis portionsstørrelsen er en tekst med bogstaver, fjern alle tegn undtagen tal og punktum
             if isinstance(s_size_raw, str) and any(c.isalpha() for c in s_size_raw):
                 s_size = ''.join(c for c in s_size_raw if c.isdigit() or c == '.')
+            #Ellers beregn samlet vægt i gram, hvis værdien allerede er numerisk
             else:
                 s_size = str(s_size_raw)
 
             grams = float(s_size) * amount
 
+        #Hvis enheden er gram, bruges input direkte, og næringsindholdet beregnes.
         else:
             grams = amount
 
         data = self.model.calc_nutrition(self.selected_product, grams)
+
+        #Gem fødevaren i databasen
         self.model.add_entry(self.selected_product, grams, data["kcal"], data["protein"])
 
+        #Hent dagens samlede kalorier og protein
         totals = self.model.db.get_daily_totals()
+
+        #Vis resultatet for den netop tilføjede fødevare
         self.view.show_added_result(data["kcal"], data["protein"])
+
+        #Opdater GUI med både tilføjet værdi og dagens total
         self.view.result_label.configure(
             text=f"Tilføjet: {data['kcal']:.0f} kcal | {data['protein']:.1f} g protein\n"
                 f"I dag: {totals[0]:.0f} kcal | {totals[1]:.1f} g protein"
